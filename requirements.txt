@@ -1,0 +1,11 @@
+faster-whisper
+gitpython
+pyautogui
+PyQt6
+pyttsx3
+psutil
+pywin32
+requests
+keyboard
+ollama
+sounddevice
