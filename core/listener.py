@@ -7,6 +7,7 @@ Sessizlik tespiti, uyku modu ve sürekli dinleme desteği.
 import logging
 import threading
 import time
+import re
 import numpy as np
 import sounddevice as sd
 import sys
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ── Ses Ayarları ─────────────────────────────────────────────────────────────
 SAMPLE_RATE = 16000          # Whisper 16kHz bekler
 CHANNELS = 1                 # Mono
-CHUNK_DURATION = 3           # Her chunk 3 saniye
+CHUNK_DURATION = 5           # Her chunk 5 saniye
 SILENCE_THRESHOLD = 0.01     # Bu seviyenin altı sessizlik sayılır
 MAX_RECORD_SECONDS = 10      # Maksimum kayıt süresi (ses varsa)
 MIN_AUDIO_LENGTH = 0.5       # Minimum ses uzunluğu (saniye)
@@ -62,29 +63,8 @@ class Listener:
 
         # Whisper modelini yükle (CUDA başarısız olursa CPU'ya düş)
         logger.info(f"Whisper model yükleniyor: {WHISPER_MODEL} (device={device})")
-        try:
-            self.model = WhisperModel(
-                WHISPER_MODEL,
-                device=device,
-                compute_type="float16" if device == "cuda" else "int8",
-            )
-            # Hızlı doğrulama — CUDA runtime sorunlarını erken yakala
-            if device == "cuda":
-                import numpy as _np
-                _test = _np.zeros(16000, dtype=_np.float32)
-                list(self.model.transcribe(_test, language=WHISPER_LANGUAGE))
-        except Exception as e:
-            if device == "cuda":
-                logger.warning(f"CUDA başarısız ({e}), CPU moduna geçiliyor...")
-                self.device = "cpu"
-                self.model = WhisperModel(
-                    WHISPER_MODEL,
-                    device="cpu",
-                    compute_type="int8",
-                )
-            else:
-                raise
-        logger.info(f"Whisper model hazır (device={self.device}).")
+        self.model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+        logger.info("Whisper model hazır (device=cpu).")
 
     def _is_silent(self, audio_data: np.ndarray) -> bool:
         """Ses verisinin sessizlik eşiğinin altında olup olmadığını kontrol eder."""
@@ -93,29 +73,58 @@ class Listener:
 
     def _record_chunk(self, duration: float = None) -> np.ndarray:
         """
-        Mikrofondan belirtilen süre kadar ses kaydeder.
-
-        Args:
-            duration: Kayıt süresi (saniye). None ise chunk_duration kullanılır.
-
-        Returns:
-            numpy array olarak ses verisi.
+        Mikrofondan dinamik olarak ses kaydeder.
+        Eğer konuşma başlarsa, konuşma bitene (1.5 sn sessizlik olana) veya 
+        maksimum süreye (örn. 10 sn) ulaşana kadar kaydı uzatır.
         """
         if duration is None:
             duration = self.chunk_duration
 
-        frames = int(duration * self.sample_rate)
-        logger.debug(f"Kayıt başlıyor: {duration}s, {frames} frame")
-
-        audio = sd.rec(
-            frames,
-            samplerate=self.sample_rate,
-            channels=self.channels,
-            dtype="float32",
-        )
-        sd.wait()  # Kayıt bitene kadar bekle
-
-        return audio.flatten()
+        sample_rate = self.sample_rate
+        chunk_size = int(0.1 * sample_rate)  # 100ms slices
+        
+        audio_buffer = []
+        speech_detected = False
+        silence_seconds = 0.0
+        total_seconds = 0.0
+        
+        logger.debug("Dinamik kayıt başlıyor...")
+        
+        # Start input stream
+        with sd.InputStream(samplerate=sample_rate, channels=self.channels, dtype="float32") as stream:
+            while total_seconds < MAX_RECORD_SECONDS:
+                # Read 100ms chunk
+                data, overflowed = stream.read(chunk_size)
+                flat_data = data.flatten()
+                audio_buffer.append(flat_data)
+                
+                total_seconds += 0.1
+                
+                # Check silence/speech in this slice
+                is_silent_slice = np.sqrt(np.mean(flat_data ** 2)) < self.silence_threshold
+                
+                if not speech_detected:
+                    if not is_silent_slice:
+                        speech_detected = True
+                        logger.debug("Konuşma algılandı, kayıt uzatılıyor...")
+                    elif total_seconds >= duration:
+                        # If no speech detected after chunk_duration (5s), stop and return
+                        break
+                else:
+                    if is_silent_slice:
+                        silence_seconds += 0.1
+                    else:
+                        silence_seconds = 0.0
+                        
+                    # Stop if 1.5 seconds of continuous silence after speech detected
+                    if silence_seconds >= 1.5:
+                        logger.debug("1.5 saniye sessizlik algılandı, kayıt sonlandırılıyor.")
+                        break
+                        
+        if not audio_buffer:
+            return np.array([], dtype="float32")
+            
+        return np.concatenate(audio_buffer)
 
     def _transcribe(self, audio_data: np.ndarray) -> str:
         """
@@ -130,11 +139,12 @@ class Listener:
         try:
             segments, info = self.model.transcribe(
                 audio_data,
-                language=WHISPER_LANGUAGE,
+                language=None,             # Oto-tespit (Türkçe veya İngilizce)
                 beam_size=5,
                 vad_filter=True,           # Sessiz bölümleri otomatik filtrele
                 vad_parameters=dict(
-                    min_silence_duration_ms=500,
+                    min_silence_duration_ms=1500,
+                    speech_pad_ms=400,
                 ),
             )
 
@@ -183,13 +193,17 @@ class Listener:
         # Whisper ile metin tanıma
         return self._transcribe(audio)
 
-    def start_listening(self, callback: callable):
+    def start_listening(self, callback: callable, tts=None):
         """
         Sürekli dinleme döngüsü başlatır. Her başarılı tanımada callback(text) çağırır.
+        Eğer tts referansı verilmişse, konuşma sırasında yeni ses algılandığında
+        konuşmayı kesip yeni komutu işler (interrupt desteği).
 
         Args:
             callback: Tanınan metin ile çağrılacak fonksiyon → callback(text: str)
+            tts: TTS referansı (interrupt desteği için opsiyonel).
         """
+        self._tts_ref = tts
         self._stop_event.clear()
         logger.info("Sürekli dinleme başlatılıyor...")
 
@@ -199,12 +213,32 @@ class Listener:
                     time.sleep(0.5)
                     continue
 
-                text = self.listen()
-                if text:
-                    try:
-                        callback(text)
-                    except Exception as e:
-                        logger.error(f"Callback hatası: {e}")
+                try:
+                    text = self.listen()
+                    if text:
+                        # ── 3) Durdurma Kelimeleri Kontrolü ──────────────────────────
+                        lower_text = text.lower().strip().strip(".,?!;:")
+                        stop_words = ["dur", "yeter", "yeterli", "stop", "enough", "quiet"]
+                        has_stop_word = any(re.search(rf"\b{w}\b", lower_text) for w in stop_words)
+                        
+                        if has_stop_word:
+                            logger.info(f"Durdurma komutu algılandı: '{text}'. Konuşma sonlandırılıyor.")
+                            if self._tts_ref:
+                                self._tts_ref.stop()
+                            continue  # Komut işlemeyi atla (skip command processing)
+
+                        # Interrupt: konuşma sırasında yeni ses algılandıysa konuşmayı kes
+                        if self._tts_ref and self._tts_ref.is_speaking:
+                            logger.info(f"Konuşma kesiliyor, yeni komut algılandı: '{text}'")
+                            self._tts_ref.stop()
+
+                        try:
+                            callback(text)
+                        except Exception as e:
+                            logger.error(f"Callback hatası: {e}")
+                except Exception as e:
+                    logger.error(f"Dinleme döngüsü hatası (otomatik yeniden denenecek): {e}")
+                    time.sleep(1.0)
 
             logger.info("Dinleme döngüsü durduruldu.")
 

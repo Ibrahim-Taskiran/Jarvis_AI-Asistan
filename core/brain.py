@@ -18,12 +18,26 @@ logger = logging.getLogger(__name__)
 
 # ── Sistem Promptu ──────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """Sen JARVIS adlı Türkçe bir masaüstü asistansın.
-Kullanıcının sesli komutlarını analiz et ve YALNIZCA JSON döndür.
+Kullanıcının komutlarını analiz et ve YALNIZCA JSON döndür.
 
-Format:
+Eğer komut bir uygulama açma/kapama, sistem komutu, git işlemi, tarayıcı, medya veya dosya işlemi ise JSON döndür:
 {"action": "<aksiyon>", "params": {<parametreler>}, "confirm": false}
 
+Eğer komut bir sohbet, soru, selamlama veya belirsiz bir şeyse MUTLAKA şunu döndür:
+{"action": "free_chat", "params": {}, "confirm": false}
+
 "confirm: true" yalnızca tehlikeli işlemlerde kullanılır (shutdown, delete, force_push).
+
+ÖRNEKLER:
+"Merhaba nasılsın" → {"action": "free_chat", "params": {}, "confirm": false}
+"Spotify aç" → {"action": "open_app", "params": {"app": "spotify"}, "confirm": false}
+"Hava durumu" → {"action": "free_chat", "params": {}, "confirm": false}
+"Sesi kıs" → {"action": "volume_control", "params": {"direction": "down"}, "confirm": false}
+"Ne yapabilirsin?" → {"action": "free_chat", "params": {}, "confirm": false}
+"Bilgisayarı kapat" → {"action": "shutdown", "params": {}, "confirm": true}
+"Masaüstüne kalem isimli txt dosyası oluştur" → {"action": "free_chat", "params": {}, "confirm": false}
+"Masaüstündeki test.txt dosyasını aç" → {"action": "free_chat", "params": {}, "confirm": false}
+"Github Desktop aç" → {"action": "free_chat", "params": {}, "confirm": false}
 
 Mevcut aksiyonlar:
 - open_app        : Uygulama aç           → params: {"app": "spotify"}
@@ -43,10 +57,11 @@ Mevcut aksiyonlar:
 - create_readme   : README oluştur        → params: {"repo": "proje_adı"}
 - generate_prompt : Prompt üret           → params: {"topic": "konu"}
 - daily_summary   : Günlük özet          → params: {}
+- free_chat       : Sohbet / belirsiz     → params: {}
 
 Kurallar:
 1. YALNIZCA geçerli JSON döndür, başka metin ekleme.
-2. Bilinmeyen komutlar için en yakın aksiyonu seç.
+2. Sohbet, selamlama, soru veya belirsiz komutlar için MUTLAKA "free_chat" aksiyonunu kullan.
 3. Tehlikeli işlemlerde (shutdown, delete, force_push) "confirm": true yap.
 4. Parametreleri Türkçe komuttan doğru şekilde çıkar.
 """
@@ -126,7 +141,7 @@ class Brain:
 
         return parsed
 
-    def think(self, user_input: str) -> dict | None:
+    def think(self, user_input: str, context=None) -> dict | None:
         """
         Kullanıcı komutunu Ollama'ya gönderir ve JSON yanıt döndürür.
 
@@ -151,7 +166,13 @@ class Brain:
             raw_content = response["message"]["content"]
             logger.debug(f"Ham LLM yanıtı: {raw_content}")
 
-            parsed = self._extract_json(raw_content)
+            # Ollama yanıtı zaten dict olabilir, kontrol et
+            if isinstance(raw_content, dict):
+                parsed = raw_content
+            elif isinstance(raw_content, str):
+                parsed = self._extract_json(raw_content)
+            else:
+                parsed = self._extract_json(str(raw_content))
 
             if parsed:
                 parsed = self._normalize_response(parsed)

@@ -13,6 +13,7 @@ SIMPLE_COMMANDS = [
     "open_app", "close_app", "shutdown", "restart",
     "volume_control", "git_push", "git_pull", "git_status",
     "git_fetch", "open_browser", "media_control", "run_terminal",
+    "free_chat",
 ]
 
 COMPLEX_COMMANDS = [
@@ -53,6 +54,9 @@ ACTION_MODULE_MAP = {
     # Dosya & özet
     "organize_files":  "file_manager",
     "daily_summary":   "daily_manager",
+
+    # Serbest sohbet
+    "free_chat":       "free_chat",
 }
 
 
@@ -72,14 +76,14 @@ def route(action: str) -> dict:
     elif action in COMPLEX_COMMANDS:
         model = "complex"
     else:
-        model = "simple"  # Bilinmeyen aksiyonlar varsayılan olarak simple
-        logger.warning(f"Tanınmayan aksiyon '{action}', varsayılan model: simple")
+        model = "complex"  # Bilinmeyen aksiyonlar free_chat'e yönlendirilir
+        logger.info(f"Tanınmayan aksiyon '{action}', free_chat modülüne yönlendiriliyor.")
 
     # Modül belirleme
-    module = ACTION_MODULE_MAP.get(action, "unknown")
+    module = ACTION_MODULE_MAP.get(action, "free_chat")
 
-    if module == "unknown":
-        logger.warning(f"Tanınmayan aksiyon '{action}', modül eşlemesi bulunamadı")
+    if module == "free_chat" and action not in ACTION_MODULE_MAP:
+        logger.info(f"Tanınmayan aksiyon '{action}', free_chat modülüne yönlendiriliyor")
 
     result = {"model": model, "module": module}
     logger.info(f"Route: {action} → model={model}, module={module}")

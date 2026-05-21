@@ -37,11 +37,14 @@ class AppManager:
             
         app_path = APPS[key]
         
-        if not os.path.exists(app_path):
+        if not app_path.startswith("shell:") and not os.path.exists(app_path):
             return {"success": False, "message": f"{key} uygulaması belirtilen yolda bulunamadı."}
             
         try:
-            subprocess.Popen([app_path], creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS if os.name == 'nt' else 0)
+            if app_path.startswith("shell:"):
+                subprocess.Popen(["explorer.exe", app_path])
+            else:
+                subprocess.Popen([app_path], creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS if os.name == 'nt' else 0)
             logger.info(f"Uygulama açıldı: {key}")
             return {"success": True, "message": f"{key} açıldı."}
         except Exception as e:
