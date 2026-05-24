@@ -16,6 +16,8 @@ import io
 import tempfile
 import wave
 
+import noisereduce as nr
+from scipy.signal import butter, sosfilt
 from faster_whisper import WhisperModel
 
 # Proje kök dizinini path'e ekle
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16000          # Whisper 16kHz bekler
 CHANNELS = 1                 # Mono
 CHUNK_DURATION = 5           # Her chunk 5 saniye
-SILENCE_THRESHOLD = 0.01     # Bu seviyenin altı sessizlik sayılır
+SILENCE_THRESHOLD = 0.003     # AMD mic array düşük seviyeli — 0.003 eşiği konuşmayı yakalar
 MAX_RECORD_SECONDS = 10      # Maksimum kayıt süresi (ses varsa)
 MIN_AUDIO_LENGTH = 0.5       # Minimum ses uzunluğu (saniye)
 
@@ -61,10 +63,20 @@ class Listener:
         self._stop_event = threading.Event()
         self._listen_thread: threading.Thread | None = None
 
-        # Whisper modelini yükle (CUDA başarısız olursa CPU'ya düş)
-        logger.info(f"Whisper model yükleniyor: {WHISPER_MODEL} (device={device})")
-        self.model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+        # Whisper modelini yükle — Türkçe için medium (CTranslate2 formatı)
+        logger.info(f"Whisper model yükleniyor: medium (device={device})")
+        self.model = WhisperModel(
+            "medium",
+            device="cpu",
+            compute_type="int8",
+        )
         logger.info("Whisper model hazır (device=cpu).")
+
+    @staticmethod
+    def _highpass_filter(audio: np.ndarray, sr: int, cutoff: float = 80.0) -> np.ndarray:
+        """80 Hz altını kesen yüksek-geçiren (high-pass) Butterworth filtresi."""
+        sos = butter(5, cutoff, btype="high", fs=sr, output="sos")
+        return sosfilt(sos, audio).astype(np.float32)
 
     def _is_silent(self, audio_data: np.ndarray) -> bool:
         """Ses verisinin sessizlik eşiğinin altında olup olmadığını kontrol eder."""
@@ -91,7 +103,7 @@ class Listener:
         logger.debug("Dinamik kayıt başlıyor...")
         
         # Start input stream
-        with sd.InputStream(samplerate=sample_rate, channels=self.channels, dtype="float32") as stream:
+        with sd.InputStream(samplerate=sample_rate, channels=self.channels, dtype="float32", blocksize=1024) as stream:
             while total_seconds < MAX_RECORD_SECONDS:
                 # Read 100ms chunk
                 data, overflowed = stream.read(chunk_size)
@@ -123,8 +135,18 @@ class Listener:
                         
         if not audio_buffer:
             return np.array([], dtype="float32")
-            
-        return np.concatenate(audio_buffer)
+
+        audio_np = np.concatenate(audio_buffer)
+
+        # ── Gürültü azaltma (noisereduce) ────────────────────────────────────
+        audio_np = nr.reduce_noise(
+            y=audio_np, sr=sample_rate, stationary=False, prop_decrease=0.75
+        )
+
+        # ── Yüksek-geçiren filtre — 80 Hz altı düşük frekans gürültüsünü keser
+        audio_np = self._highpass_filter(audio_np, sr=sample_rate, cutoff=80.0)
+
+        return audio_np
 
     def _transcribe(self, audio_data: np.ndarray) -> str:
         """
@@ -139,13 +161,21 @@ class Listener:
         try:
             segments, info = self.model.transcribe(
                 audio_data,
-                language=None,             # Oto-tespit (Türkçe veya İngilizce)
-                beam_size=5,
-                vad_filter=True,           # Sessiz bölümleri otomatik filtrele
+                language="tr",
+                task="transcribe",
+                initial_prompt=(
+                    "Bu bir Türkçe sesli komut uygulamasıdır. "
+                    "Kullanıcı Türkçe komutlar vermektedir. "
+                    "Uygulama adları, Git komutları ve dosya isimleri içerebilir."
+                ),
+                vad_filter=True,
                 vad_parameters=dict(
                     min_silence_duration_ms=1500,
                     speech_pad_ms=400,
                 ),
+                beam_size=5,
+                best_of=5,
+                temperature=0.0,
             )
 
             text = " ".join(segment.text.strip() for segment in segments).strip()

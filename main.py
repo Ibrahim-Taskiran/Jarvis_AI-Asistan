@@ -35,6 +35,7 @@ from modules.media_manager import MediaManager
 from modules.daily_summary import DailySummary
 from modules.prompt_generator import PromptGenerator
 from modules import free_chat
+from modules.gesture_manager import GestureManager
 
 # Arayüz (UI)
 from ui.window import JarvisWindow
@@ -50,6 +51,7 @@ class JarvisApp(QObject):
     sig_command = pyqtSignal(str)
     sig_result = pyqtSignal(str, bool)
     sig_model_info = pyqtSignal(str, float)
+    sig_camera_state = pyqtSignal(bool)
 
     def __init__(self, window: JarvisWindow):
         super().__init__()
@@ -60,11 +62,13 @@ class JarvisApp(QObject):
         self.sig_command.connect(self.window.set_last_command)
         self.sig_result.connect(self.window.set_result)
         self.sig_model_info.connect(self.window.set_model_info)
+        self.sig_camera_state.connect(self.update_camera_ui)
 
         # Arayüz Etkileşimlerini Bağla
         self.window.input_command.returnPressed.connect(self.handle_text_submit)
         self.window.btn_send.clicked.connect(self.handle_text_submit)
         self.window.btn_mic.clicked.connect(self.handle_mic_toggle)
+        self.window.btn_camera.clicked.connect(self.handle_camera_toggle)
         self.window.btn_stop.clicked.connect(self.handle_stop_playback)
         self.window.btn_settings.clicked.connect(self.handle_settings_click)
         self.window.sig_sleep_requested.connect(self.trigger_sleep_mode)
@@ -89,6 +93,7 @@ class JarvisApp(QObject):
         self.media_manager = MediaManager()
         self.daily_summary = DailySummary(self.memory)
         self.prompt_generator = PromptGenerator()
+        self.gesture_manager = GestureManager()
 
         # Uyku modu zamanlayıcısı
         self.last_command_time = time.time()
@@ -202,6 +207,18 @@ class JarvisApp(QObject):
         if action == "generate_prompt": return self.prompt_generator.generate_project_prompt(path or repo)
         if action == "daily_summary":
             return {"success": True, "message": self.daily_summary.generate_summary()}
+            
+        # Jest / Kamera Yöneticisi
+        if action == "camera_on":
+            res = self.gesture_manager.start()
+            if res.get("success"):
+                self.sig_camera_state.emit(True)
+            return res
+        if action == "camera_off":
+            res = self.gesture_manager.stop()
+            if res.get("success"):
+                self.sig_camera_state.emit(False)
+            return res
 
         return {"success": False, "message": f"Desteklenmeyen eylem: {action}"}
 
@@ -344,6 +361,58 @@ class JarvisApp(QObject):
                 "}"
                 "QPushButton:hover {"
                 "    border: 1px solid #5c6b73;"
+                "}"
+            )
+
+    def handle_camera_toggle(self):
+        """Kamerayı arayüz üzerinden kapatıp açar."""
+        if self.gesture_manager.is_running:
+            self.gesture_manager.stop()
+            self.sig_camera_state.emit(False)
+            self.sig_result.emit("Kamera kapatıldı.", True)
+            self.tts.speak_async("Kamera kapatıldı.")
+        else:
+            self.gesture_manager.start()
+            self.sig_camera_state.emit(True)
+            self.sig_result.emit("Kamera açıldı.", True)
+            self.tts.speak_async("Kamera açıldı.")
+
+    def update_camera_ui(self, active: bool):
+        """Kamera butonunun stilini thread-safe şekilde günceller."""
+        if active:
+            self.window.btn_camera.setText("📷 Kamera açık")
+            self.window.btn_camera.setStyleSheet(
+                "QPushButton {"
+                "    background-color: #0f1917;"
+                "    border: 1px solid #133c30;"
+                "    border-radius: 8px;"
+                "    color: #00ff88;"
+                "    font-size: 11px;"
+                "    font-weight: bold;"
+                "    min-height: 34px;"
+                "    padding: 0 15px;"
+                "}"
+                "QPushButton:hover {"
+                "    background-color: #132e26;"
+                "    border: 1px solid #00ff88;"
+                "}"
+            )
+        else:
+            self.window.btn_camera.setText("📷 Kamera kapalı")
+            self.window.btn_camera.setStyleSheet(
+                "QPushButton {"
+                "    background-color: #1a1114;"
+                "    border: 1px solid #3c131a;"
+                "    border-radius: 8px;"
+                "    color: #ff3333;"
+                "    font-size: 11px;"
+                "    font-weight: bold;"
+                "    min-height: 34px;"
+                "    padding: 0 15px;"
+                "}"
+                "QPushButton:hover {"
+                "    background-color: #2e1318;"
+                "    border: 1px solid #ff3333;"
                 "}"
             )
 

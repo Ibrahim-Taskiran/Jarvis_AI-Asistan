@@ -13,7 +13,7 @@ SIMPLE_COMMANDS = [
     "open_app", "close_app", "shutdown", "restart",
     "volume_control", "git_push", "git_pull", "git_status",
     "git_fetch", "open_browser", "media_control", "run_terminal",
-    "free_chat",
+    "camera_on", "camera_off", "free_chat",
 ]
 
 COMPLEX_COMMANDS = [
@@ -41,6 +41,10 @@ ACTION_MODULE_MAP = {
     # Tarayıcı & medya
     "open_browser":    "browser_manager",
     "media_control":   "media_manager",
+
+    # Jest ve Kamera Kontrolü
+    "camera_on":       "gesture_manager",
+    "camera_off":      "gesture_manager",
 
     # Terminal
     "run_terminal":    "terminal_manager",

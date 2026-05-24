@@ -343,6 +343,25 @@ class JarvisWindow(QWidget):
             "}"
         )
         
+        self.btn_camera = QPushButton("📷 Kamera kapalı")
+        # Kamera kapalı varsayılan stil
+        self.btn_camera.setStyleSheet(
+            "QPushButton {"
+            "    background-color: #1a1114;"
+            "    border: 1px solid #3c131a;"
+            "    border-radius: 8px;"
+            "    color: #ff3333;"
+            "    font-size: 11px;"
+            "    font-weight: bold;"
+            "    min-height: 34px;"
+            "    padding: 0 15px;"
+            "}"
+            "QPushButton:hover {"
+            "    background-color: #2e1318;"
+            "    border: 1px solid #ff3333;"
+            "}"
+        )
+        
         self.btn_stop = QPushButton("⏹")
         self.btn_stop.setToolTip("Sesi Durdur")
         self.btn_stop.setStyleSheet(
@@ -388,6 +407,7 @@ class JarvisWindow(QWidget):
         )
         
         action_layout.addWidget(self.btn_mic, 1) # Mikrofon tuşu genişlesin
+        action_layout.addWidget(self.btn_camera, 1) # Kamera tuşu genişlesin
         action_layout.addWidget(self.btn_stop)
         action_layout.addWidget(self.btn_settings)
         

@@ -38,6 +38,8 @@ Eğer komut bir sohbet, soru, selamlama veya belirsiz bir şeyse MUTLAKA şunu d
 "Masaüstüne kalem isimli txt dosyası oluştur" → {"action": "free_chat", "params": {}, "confirm": false}
 "Masaüstündeki test.txt dosyasını aç" → {"action": "free_chat", "params": {}, "confirm": false}
 "Github Desktop aç" → {"action": "free_chat", "params": {}, "confirm": false}
+"Kamera aç" → {"action": "camera_on", "params": {}, "confirm": false}
+"Kamera kapat" → {"action": "camera_off", "params": {}, "confirm": false}
 
 Mevcut aksiyonlar:
 - open_app        : Uygulama aç           → params: {"app": "spotify"}
@@ -57,6 +59,8 @@ Mevcut aksiyonlar:
 - create_readme   : README oluştur        → params: {"repo": "proje_adı"}
 - generate_prompt : Prompt üret           → params: {"topic": "konu"}
 - daily_summary   : Günlük özet          → params: {}
+- camera_on       : Kamerayı aç           → params: {}
+- camera_off      : Kamerayı kapat        → params: {}
 - free_chat       : Sohbet / belirsiz     → params: {}
 
 Kurallar:
